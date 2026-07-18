@@ -33,10 +33,23 @@
 		});
 
 		// Capture original File BEFORE AudioMass decodes it
-		document.addEventListener ('drop', function (e) {
+		// AudioMass drag handler converts File→ArrayBuffer via FileReader,
+		// so we intercept the drop event to grab the original File object
+		d.addEventListener ('drop', function (e) {
 			var files = e.dataTransfer && e.dataTransfer.files;
 			if (files && files.length > 0) {
 				var file = files[0];
+				if (file.type && file.type.indexOf ('audio/') === 0) {
+					originalFile = file;
+					console.log ('[iHack] Captured original file:', file.name, (file.size / (1024*1024)).toFixed (1) + 'MB');
+				}
+			}
+		}, true); // Use capture phase to fire BEFORE AudioMass handler
+
+		// Also capture from file input dialog
+		d.addEventListener ('change', function (e) {
+			if (e.target && e.target.files && e.target.files.length > 0) {
+				var file = e.target.files[0];
 				if (file.type && file.type.indexOf ('audio/') === 0) {
 					originalFile = file;
 					console.log ('[iHack] Captured original file:', file.name, (file.size / (1024*1024)).toFixed (1) + 'MB');
