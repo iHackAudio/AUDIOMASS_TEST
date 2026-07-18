@@ -32,6 +32,16 @@
 			}
 		});
 
+		// Capture original File by monkey-patching AudioMass's LoadArrayBuffer
+		var originalLoadArrayBuffer = app.engine.LoadArrayBuffer;
+		app.engine.LoadArrayBuffer = function (e) {
+			if (e && e.size) {
+				originalFile = e;
+				console.log ('[iHack] Captured original file:', e.name || 'blob', (e.size / (1024*1024)).toFixed (1) + 'MB');
+			}
+			return originalLoadArrayBuffer.call (this, e);
+		};
+
 		// Listen for audio load to show pipeline bar
 		app.listenFor ('DidDownloadFile', function () {
 			var bar = d.getElementById ('ihack-pipeline-bar');
