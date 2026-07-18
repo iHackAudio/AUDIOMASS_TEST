@@ -414,7 +414,7 @@
     function injectUI(appRef) {
         var bar = document.createElement('div');
         bar.id = 'ihack-pipeline-bar';
-        bar.style.cssText = 'display:flex;align-items:center;gap:4px;padding:4px 8px;background:#111620;border:1px solid #252d3d;border-radius:4px;margin:4px;font-family:Inter,system-ui,sans-serif;';
+        bar.style.cssText = 'display:flex;z-index:100;align-items:center;gap:4px;padding:4px 8px;background:#111620;border:1px solid #252d3d;border-radius:4px;margin:4px;font-family:Inter,system-ui,sans-serif;';
         bar.innerHTML =
             '<span style="font-size:10px;font-weight:700;color:#a78bfa;margin-right:4px;">iHack</span>' +
             '<button id="ihack-show-settings" style="background:#1c2333;color:#7a8ba0;border:1px solid #252d3d;padding:3px 8px;border-radius:3px;font-size:10px;cursor:pointer;">⚙ Settings</button>' +
@@ -427,7 +427,6 @@
             Pipeline.loadDemo();
             document.getElementById('ihack-status').textContent = '● Demo loaded';
         });
-        appRef.listenFor('DidDownloadFile', function() { bar.style.display = 'flex'; });
     }
 
     function openSettingsModal() {
