@@ -488,6 +488,9 @@
 			return audioBuffer;
 		}
 
+		// Get AudioContext from WaveSurfer
+		var ac = app.engine.wavesurfer.backend.ac;
+
 		// Sort end-to-start to preserve offsets
 		var sorted = confirmed.slice ().sort (function (a, b) { return b.start - a.start; });
 		var sr = audioBuffer.sampleRate;
@@ -506,7 +509,7 @@
 			if (endSamp > startSamp && endSamp <= audioBuffer.length) {
 				var fadeSamples = Math.min (256, startSamp);
 				var newLen = audioBuffer.length - (endSamp - startSamp);
-				var newBuf = audioBuffer.context.createBuffer (audioBuffer.numberOfChannels, newLen, sr);
+				var newBuf = ac.createBuffer (audioBuffer.numberOfChannels, newLen, sr);
 
 				for (var ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
 					var oldData = audioBuffer.getChannelData (ch);
@@ -514,7 +517,7 @@
 					newData.set (oldData.subarray (0, startSamp));
 					newData.set (oldData.subarray (endSamp), startSamp);
 
-					// Micro-fade at join point
+					// Micro-fade at join point (5ms, like Python)
 					if (fadeSamples > 0 && startSamp > 0) {
 						for (var f = 0; f < fadeSamples; f++) {
 							var t = f / fadeSamples;
@@ -602,6 +605,75 @@
 		state.midpoints.forEach (function (mp, i) { mp.id = 'M' + String (i + 1).padStart (3, '0'); });
 	}
 
+	// ══════════════════════════════════════════════════════════════
+	//  HARD VALIDATION LAYER (from Python engine.py)
+	// ══════════════════════════════════════════════════════════════
+
+	function validateCut (cut, midpoints, segments) {
+		// 1. ID existence check
+		var startMp = midpoints.find (function (m) { return m.id === cut.cut_start_midpoint; });
+		var endMp = midpoints.find (function (m) { return m.id === cut.cut_end_midpoint; });
+
+		if (!startMp) return { valid: false, reason: 'Invalid midpoint ID: ' + cut.cut_start_midpoint };
+		if (!endMp) return { valid: false, reason: 'Invalid midpoint ID: ' + cut.cut_end_midpoint };
+
+		// 2. BREATH gap hard block
+		if (startMp.gap_type === 'BREATH') return { valid: false, reason: 'BREATH gap at ' + startMp.id + ' — never cut here' };
+		if (endMp.gap_type === 'BREATH') return { valid: false, reason: 'BREATH gap at ' + endMp.id + ' — never cut here' };
+
+		// 3. Temporal order check
+		if (startMp.time >= endMp.time) return { valid: false, reason: 'Start >= end' };
+
+		// 4. Enclosure check: target segments fully inside boundaries
+		var targetSegs = cut.target_segments || [];
+		for (var i = 0; i < targetSegs.length; i++) {
+			var seg = segments.find (function (s) { return s.id === targetSegs[i]; });
+			if (!seg) return { valid: false, reason: 'Invalid segment ID: ' + targetSegs[i] };
+			if (!(startMp.time <= seg.start && seg.end <= endMp.time)) {
+				return { valid: false, reason: 'Target ' + targetSegs[i] + ' leaks outside boundaries' };
+			}
+		}
+
+		// 5. Self-reference check for redundancy
+		if (cut.category === 'REDUNDANT_RESTATEMENT') {
+			var redundantTo = (cut.semantic_analysis || {}).redundant_to || [];
+			for (var i = 0; i < redundantTo.length; i++) {
+				if (targetSegs.indexOf (redundantTo[i]) >= 0) {
+					return { valid: false, reason: 'Cannot be redundant to itself' };
+				}
+			}
+		}
+
+		// ALL PASS
+		return {
+			valid: true,
+			start: startMp.time,
+			end: endMp.time,
+			start_id: startMp.id,
+			end_id: endMp.id,
+			start_vad: startMp.vad_confirmed || false,
+			end_vad: endMp.vad_confirmed || false,
+			start_gap_type: startMp.gap_type || 'UNKNOWN',
+			end_gap_type: endMp.gap_type || 'UNKNOWN',
+			start_confidence: startMp.confidence || 0,
+			end_confidence: endMp.confidence || 0,
+		};
+	}
+
+	// ══════════════════════════════════════════════════════════════
+	//  GAP CLASSIFICATION (from Python spectral_analyzer.py)
+	// ══════════════════════════════════════════════════════════════
+
+	function classifyGap (gapMs, silenceConf) {
+		// BREATH: < 80ms — never auto-cut
+		if (gapMs < 80) return { type: 'BREATH', canAutoCut: false };
+		// TIGHT: 80–150ms
+		if (gapMs < 150) return { type: silenceConf > 0.85 ? 'TIGHT_CLEAN' : 'TIGHT', canAutoCut: silenceConf > 0.90 };
+		// CLEAN/NOISY: >= 150ms
+		if (silenceConf > 0.80) return { type: 'CLEAN_SILENCE', canAutoCut: true };
+		return { type: 'NOISY_SILENCE', canAutoCut: false };
+	}
+
 	function getState () { return state; }
 	function getSegments () { return state.segments; }
 	function getMidpoints () { return state.midpoints; }
@@ -612,6 +684,26 @@
 
 	function round3 (v) { return Math.round (v * 1000) / 1000; }
 	function round1 (v) { return Math.round (v * 10) / 10; }
+
+	// ══════════════════════════════════════════════════════════════
+	//  CONSTANTS (from Python engine.py)
+	// ══════════════════════════════════════════════════════════════
+
+	var CATEGORY_COLORS = {
+		FILLER_ACK: '#9ca3af',
+		FILLER_TRANSITION: '#6b7280',
+		FILLER_TRANS: '#6b7280',
+		FILLER_HEDGE: '#6b7280',
+		REDUNDANT_RESTATEMENT: '#fbbf24',
+		REDUNDANT: '#fbbf24',
+		CONVERSATIONAL_FILLER: '#fb923c',
+		SUMMARY_RESTATEMENT: '#eab308',
+		DEAD_CONTENT: '#ef4444',
+		WEAK_OPENER: '#a855f7',
+		PAUSE_FILLER: '#ec4899',
+		TANGENT: '#8b5cf6',
+		MANUAL_CUT: '#06b6d4',
+	};
 
 	// ══════════════════════════════════════════════════════════════
 	//  PUBLIC API
@@ -637,6 +729,10 @@
 		// Helpers
 		rippleShift: rippleShift,
 		snapToZeroCrossing: snapToZeroCrossing,
+		validateCut: validateCut,
+		classifyGap: classifyGap,
+		// Constants
+		CATEGORY_COLORS: CATEGORY_COLORS,
 		// Prompt (for testing)
 		buildAnalysisPrompt: buildAnalysisPrompt,
 	};
