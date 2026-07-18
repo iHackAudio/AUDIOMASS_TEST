@@ -145,10 +145,21 @@
 		try {
 			switch (passNum) {
 				case 1:
-					// Transcribe — need audio as blob
-					var blob = await audioBufferToBlob (buffer);
-					logConsole ('Sending audio to Groq Whisper... (' + (blob.size / 1024).toFixed (0) + 'KB)', 'info');
-					await pipeline.transcribe (blob);
+					// Transcribe — send original file if captured, otherwise WAV
+					if (originalFile) {
+						var sizeMB = (originalFile.size / (1024 * 1024)).toFixed (1);
+						logConsole ('Sending to Groq Whisper... (' + originalFile.name + ', ' + sizeMB + 'MB)', 'info');
+						if (originalFile.size > 25 * 1024 * 1024) {
+							logConsole ('⚠ Audio too large (' + sizeMB + 'MB > 25MB).', 'error');
+							break;
+						}
+						await pipeline.transcribe (originalFile);
+					} else {
+						logConsole ('⚠ No original file captured, sending WAV...', 'warn');
+						var blob = await audioBufferToBlob (buffer);
+						logConsole ('Sending audio to Groq Whisper... (' + (blob.size / 1024).toFixed (0) + 'KB)', 'info');
+						await pipeline.transcribe (blob);
+					}
 					logConsole ('✓ Transcription complete: ' + pipeline.getSegments ().length + ' segments', 'ok');
 					break;
 				case 2:
