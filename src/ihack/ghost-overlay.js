@@ -1,13 +1,41 @@
 (function (w) {
 	'use strict';
 
-	var canvas = null, ctx = null, app = null, wavesurfer = null, container = null, rafId = null, activeCutId = null;
+	var canvas = null, ctx = null, app = null, wavesurfer = null, container = null, rafId = null;
+	var activeCutId = null, hoveredCutId = null;
 
+	// Colors from Python styles.py — exact match
 	var COLORS = {
-		high: 'rgba(239,68,68,0.35)', medium: 'rgba(245,158,11,0.30)', low: 'rgba(122,139,160,0.20)',
-		confirmed: 'rgba(52,211,153,0.25)', executed: 'rgba(52,211,153,0.10)', active: 'rgba(99,102,241,0.40)',
-		border: { high: 'rgba(239,68,68,0.7)', medium: 'rgba(245,158,11,0.6)', low: 'rgba(122,139,160,0.4)', confirmed: 'rgba(52,211,153,0.5)', executed: 'rgba(52,211,153,0.2)' },
-		midpoint: { CLEAN_SILENCE: 'rgba(52,211,153,0.5)', TIGHT: 'rgba(245,158,11,0.4)', BREATH: 'rgba(122,139,160,0.3)' },
+		// Cut states (CUT_PENDING_HIGH/MED/LOW/CONFIRMED/EDITED/MANUAL)
+		pending_high: 'rgba(239, 68, 68, 0.45)',
+		pending_med:  'rgba(245, 158, 11, 0.45)',
+		pending_low:  'rgba(122, 139, 160, 0.35)',
+		confirmed:    'rgba(52, 211, 153, 0.18)',
+		edited:       'rgba(99, 102, 241, 0.3)',
+		executed:     'rgba(52, 211, 153, 0.10)',
+		hovered:      'rgba(99, 102, 241, 0.40)',
+		active:       'rgba(99, 102, 241, 0.50)',
+		manual:       'rgba(6, 182, 212, 0.3)',
+		border: {
+			pending_high: 'rgba(239, 68, 68, 0.7)',
+			pending_med:  'rgba(245, 158, 11, 0.6)',
+			pending_low:  'rgba(122, 139, 160, 0.4)',
+			confirmed:    'rgba(52, 211, 153, 0.5)',
+			edited:       'rgba(99, 102, 241, 0.5)',
+			executed:     'rgba(52, 211, 153, 0.2)',
+			hovered:      'rgba(99, 102, 241, 0.8)',
+		},
+		// Midpoint markers (MIDPOINT_CONFIRMED / MIDPOINT_UNCONFIRMED)
+		midpoint: {
+			CLEAN_SILENCE: { fill: 'rgba(52, 211, 153, 0.5)', dot: 'rgba(52, 211, 153, 0.8)' },
+			NOISY_SILENCE: { fill: 'rgba(245, 158, 11, 0.4)', dot: 'rgba(245, 158, 11, 0.7)' },
+			TIGHT:         { fill: 'rgba(245, 158, 11, 0.4)', dot: 'rgba(245, 158, 11, 0.7)' },
+			TIGHT_CLEAN:   { fill: 'rgba(245, 158, 11, 0.4)', dot: 'rgba(245, 158, 11, 0.7)' },
+			BREATH:        { fill: 'rgba(122, 139, 160, 0.3)', dot: 'rgba(122, 139, 160, 0.5)' },
+		},
+		// Selection (SELECTION_COLOR)
+		selection: 'rgba(99, 102, 241, 0.12)',
+		selection_border: 'rgba(99, 102, 241, 0.7)',
 	};
 
 	function init (appRef) {
@@ -15,7 +43,6 @@
 		wavesurfer = app.engine.wavesurfer;
 		container = wavesurfer.drawer.wrapper;
 
-		// Append to container's parent — pointer-events:none so waveform stays interactive
 		var parent = container.parentNode || container;
 		canvas = document.createElement ('canvas');
 		canvas.id = 'ihack-ghost-canvas';
@@ -26,18 +53,16 @@
 		parent.appendChild (canvas);
 		ctx = canvas.getContext ('2d');
 
-		// Events on parent (canvas is transparent to clicks)
 		parent.addEventListener ('click', onClick);
 		parent.addEventListener ('mousemove', onMouseMove);
-		parent.addEventListener ('mouseleave', function () { activeCutId = null; scheduleRender (); });
+		parent.addEventListener ('mouseleave', function () { hoveredCutId = null; scheduleRender (); });
 
-		// AudioMass events
 		app.listenFor ('DidDownloadFile', function () { setTimeout (resize, 100); });
 		app.listenFor ('RequestResize', resize);
 		app.listenFor ('DidResize', resize);
+		app.listenFor ('RequestSeekTo', scheduleRender);
 
-		// Pipeline events
-		var pipeline = w.IHackPipeline;
+		var pipeline = window.IHackPipeline;
 		if (pipeline) {
 			pipeline.on ('ghostcuts:updated', scheduleRender);
 			pipeline.on ('state:changed', scheduleRender);
@@ -58,7 +83,6 @@
 		canvas.style.width = rect.width + 'px';
 		canvas.style.height = rect.height + 'px';
 		ctx.setTransform (dpr, 0, 0, dpr, 0, 0);
-		console.log ('[iHack GhostOverlay] Resize:', rect.width.toFixed (0), 'x', rect.height.toFixed (0));
 		scheduleRender ();
 	}
 
@@ -73,7 +97,7 @@
 		var H = canvas.height / (window.devicePixelRatio || 1);
 		ctx.clearRect (0, 0, W, H);
 
-		var pipeline = w.IHackPipeline;
+		var pipeline = window.IHackPipeline;
 		if (!pipeline) return;
 
 		var state = pipeline.getState ();
@@ -82,13 +106,13 @@
 
 		function tX (t) { return (t / duration) * W; }
 
-		// Draw midpoints
+		// ── Midpoint markers ──
 		var midpoints = state.midpoints || [];
 		for (var i = 0; i < midpoints.length; i++) {
 			var mp = midpoints[i];
 			var x = tX (mp.time);
-			var color = COLORS.midpoint[mp.gap_type] || COLORS.midpoint.BREATH;
-			ctx.strokeStyle = color;
+			var colors = COLORS.midpoint[mp.gap_type] || COLORS.midpoint.BREATH;
+			ctx.strokeStyle = colors.fill;
 			ctx.lineWidth = 1;
 			ctx.setLineDash ([4, 3]);
 			ctx.beginPath ();
@@ -96,13 +120,13 @@
 			ctx.lineTo (x, H);
 			ctx.stroke ();
 			ctx.setLineDash ([]);
-			ctx.fillStyle = color;
+			ctx.fillStyle = colors.dot;
 			ctx.beginPath ();
 			ctx.arc (x, H / 2, 3, 0, Math.PI * 2);
 			ctx.fill ();
 		}
 
-		// Draw ghost cuts
+		// ── Ghost cuts ──
 		var cuts = state.ghostCuts || [];
 		for (var i = 0; i < cuts.length; i++) {
 			var cut = cuts[i];
@@ -112,23 +136,40 @@
 			var w = Math.max (1, x2 - x1);
 
 			var fill, border;
-			if (cut.id === activeCutId) { fill = COLORS.active; border = 'rgba(99,102,241,0.8)'; }
-			else if (cut.state === 'executed') { fill = COLORS.executed; border = COLORS.border.executed; }
-			else if (cut.state === 'confirmed') { fill = COLORS.confirmed; border = COLORS.border.confirmed; }
-			else if (cut.confidence >= 0.85) { fill = COLORS.high; border = COLORS.border.high; }
-			else if (cut.confidence >= 0.60) { fill = COLORS.medium; border = COLORS.border.medium; }
-			else { fill = COLORS.low; border = COLORS.border.low; }
+			if (cut.id === activeCutId) {
+				fill = COLORS.active; border = COLORS.border.hovered;
+			} else if (cut.id === hoveredCutId) {
+				fill = COLORS.hovered; border = COLORS.border.hovered;
+			} else if (cut.state === 'executed') {
+				fill = COLORS.executed; border = COLORS.border.executed;
+			} else if (cut.state === 'confirmed') {
+				fill = COLORS.confirmed; border = COLORS.border.confirmed;
+			} else if (cut.state === 'edited') {
+				fill = COLORS.edited; border = COLORS.border.edited;
+			} else if (cut.confidence >= 0.85) {
+				fill = COLORS.pending_high; border = COLORS.border.pending_high;
+			} else if (cut.confidence >= 0.60) {
+				fill = COLORS.pending_med; border = COLORS.border.pending_med;
+			} else {
+				fill = COLORS.pending_low; border = COLORS.border.pending_low;
+			}
 
 			ctx.fillStyle = fill;
 			ctx.fillRect (x1, 0, w, H);
 			ctx.strokeStyle = border;
-			ctx.lineWidth = 1.5;
+			ctx.lineWidth = (cut.id === hoveredCutId || cut.id === activeCutId) ? 2 : 1.5;
 			ctx.strokeRect (x1, 0, w, H);
 
-			if (w > 40) {
+			if (w > 50) {
 				ctx.fillStyle = 'rgba(255,255,255,0.5)';
 				ctx.font = '9px monospace';
-				ctx.fillText (cut.category.replace (/_/g, ' '), x1 + 4, 12);
+				ctx.fillText (cut.category.replace (/_/g, ' '), x1 + 4, 14);
+			}
+			if (w > 80) {
+				var confColor = cut.confidence >= 0.85 ? '#ef4444' : cut.confidence >= 0.60 ? '#f59e0b' : '#7a8ba0';
+				ctx.fillStyle = confColor;
+				ctx.font = 'bold 10px monospace';
+				ctx.fillText (Math.round (cut.confidence * 100) + '%', x2 - 30, 14);
 			}
 		}
 	}
@@ -143,7 +184,12 @@
 		if (cut) {
 			app.fireEvent ('RequestSeekTo', cut.start / duration);
 			app.fireEvent ('ihack:cutClicked', cut);
+			activeCutId = cut.id;
+		} else {
+			app.fireEvent ('RequestSeekTo', time / duration);
+			activeCutId = null;
 		}
+		scheduleRender ();
 	}
 
 	function onMouseMove (e) {
@@ -154,14 +200,15 @@
 		var time = (x / W) * duration;
 		var cut = findCutAt (time);
 		var newId = cut ? cut.id : null;
-		if (newId !== activeCutId) {
-			activeCutId = newId;
+		if (newId !== hoveredCutId) {
+			hoveredCutId = newId;
+			canvas.parentNode.style.cursor = hoveredCutId ? 'pointer' : 'default';
 			scheduleRender ();
 		}
 	}
 
 	function findCutAt (time) {
-		var pipeline = w.IHackPipeline;
+		var pipeline = window.IHackPipeline;
 		if (!pipeline) return null;
 		var cuts = pipeline.getGhostCuts ();
 		for (var i = 0; i < cuts.length; i++) {
@@ -172,6 +219,16 @@
 		return null;
 	}
 
-	w.IHackGhostOverlay = { init: init, render: scheduleRender, resize: resize };
+	function setActiveCut (cutId) {
+		activeCutId = cutId;
+		scheduleRender ();
+	}
+
+	w.IHackGhostOverlay = {
+		init: init,
+		render: scheduleRender,
+		resize: resize,
+		setActiveCut: setActiveCut,
+	};
 
 }) (window);
