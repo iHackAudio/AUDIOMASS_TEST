@@ -407,10 +407,110 @@
         setTimeout(waitForApp, 200);
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // PART 4: SETTINGS MODAL + PIPELINE BAR
+    // ═══════════════════════════════════════════════════════════
+
+    function injectUI(appRef) {
+        var bar = document.createElement('div');
+        bar.id = 'ihack-pipeline-bar';
+        bar.style.cssText = 'display:flex;align-items:center;gap:4px;padding:4px 8px;background:#111620;border:1px solid #252d3d;border-radius:4px;margin:4px;font-family:Inter,system-ui,sans-serif;';
+        bar.innerHTML =
+            '<span style="font-size:10px;font-weight:700;color:#a78bfa;margin-right:4px;">iHack</span>' +
+            '<button id="ihack-show-settings" style="background:#1c2333;color:#7a8ba0;border:1px solid #252d3d;padding:3px 8px;border-radius:3px;font-size:10px;cursor:pointer;">⚙ Settings</button>' +
+            '<button id="ihack-load-demo" style="background:#1c2333;color:#7a8ba0;border:1px solid #252d3d;padding:3px 8px;border-radius:3px;font-size:10px;cursor:pointer;">📋 Demo</button>' +
+            '<span id="ihack-status" style="font-size:10px;color:#7a8ba0;margin-left:auto;">● Ready</span>';
+        var editor = appRef.el;
+        if (editor) editor.insertBefore(bar, editor.firstChild);
+        document.getElementById('ihack-show-settings').addEventListener('click', openSettingsModal);
+        document.getElementById('ihack-load-demo').addEventListener('click', function() {
+            Pipeline.loadDemo();
+            document.getElementById('ihack-status').textContent = '● Demo loaded';
+        });
+        appRef.listenFor('DidDownloadFile', function() { bar.style.display = 'flex'; });
+    }
+
+    function openSettingsModal() {
+        var existing = document.getElementById('ihack-settings-modal');
+        if (existing) { existing.remove(); return; }
+        Pipeline.loadSettings();
+        var state = Pipeline.getState();
+        var providers = ['gemini', 'groq', 'openrouter'];
+        var models = {
+            gemini: ['gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash-001'],
+            groq: ['qwen3-32b', 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+            openrouter: ['qwen/qwen3-32b', 'meta-llama/llama-3.3-70b-instruct:free'],
+        };
+        var overlay = document.createElement('div');
+        overlay.id = 'ihack-settings-modal';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:999;display:flex;align-items:center;justify-content:center;';
+        var modal = document.createElement('div');
+        modal.style.cssText = 'background:#161b26;border:1px solid #252d3d;border-radius:8px;width:400px;box-shadow:0 16px 48px rgba(0,0,0,0.6);font-family:Inter,system-ui,sans-serif;';
+        modal.innerHTML =
+            '<div style="padding:12px 16px;border-bottom:1px solid #252d3d;display:flex;align-items:center;justify-content:space-between;">' +
+                '<span style="font-size:13px;font-weight:700;color:#e2e8f0;">⚙ iHack AI Settings</span>' +
+                '<button id="ihack-cfg-close" style="background:none;border:none;color:#7a8ba0;cursor:pointer;font-size:16px;">✕</button>' +
+            '</div>' +
+            '<div style="padding:16px;">' +
+                '<div style="margin-bottom:14px;"><label style="display:block;font-size:10px;font-weight:600;text-transform:uppercase;color:#3d4a5e;margin-bottom:4px;">Groq API Key (Whisper)</label>' +
+                '<input id="ihack-cfg-groq" type="password" value="' + (state.groqKey || '') + '" placeholder="gsk_..." style="width:100%;padding:8px;background:#111620;border:1px solid #252d3d;border-radius:4px;color:#e2e8f0;font-family:JetBrains Mono,monospace;font-size:11px;outline:none;box-sizing:border-box;"></div>' +
+                '<div style="margin-bottom:14px;"><label style="display:block;font-size:10px;font-weight:600;text-transform:uppercase;color:#3d4a5e;margin-bottom:4px;">Analysis Provider</label>' +
+                '<select id="ihack-cfg-provider" style="width:100%;padding:8px;background:#111620;border:1px solid #252d3d;border-radius:4px;color:#e2e8f0;font-size:11px;cursor:pointer;outline:none;">' +
+                providers.map(function(p) { return '<option value="' + p + '"' + (state.provider === p ? ' selected' : '') + '>' + p.charAt(0).toUpperCase() + p.slice(1) + '</option>'; }).join('') +
+                '</select></div>' +
+                '<div style="margin-bottom:14px;"><label style="display:block;font-size:10px;font-weight:600;text-transform:uppercase;color:#3d4a5e;margin-bottom:4px;">API Key (Analysis)</label>' +
+                '<input id="ihack-cfg-aikey" type="password" value="' + (Pipeline.getActiveKey() || '') + '" placeholder="AIza... or gsk_..." style="width:100%;padding:8px;background:#111620;border:1px solid #252d3d;border-radius:4px;color:#e2e8f0;font-family:JetBrains Mono,monospace;font-size:11px;outline:none;box-sizing:border-box;"></div>' +
+                '<div style="margin-bottom:14px;"><label style="display:block;font-size:10px;font-weight:600;text-transform:uppercase;color:#3d4a5e;margin-bottom:4px;">Model</label>' +
+                '<select id="ihack-cfg-model" style="width:100%;padding:8px;background:#111620;border:1px solid #252d3d;border-radius:4px;color:#e2e8f0;font-size:11px;cursor:pointer;outline:none;">' +
+                (models[state.provider] || models.gemini).map(function(m) { return '<option' + (state.model === m ? ' selected' : '') + '>' + m + '</option>'; }).join('') +
+                '</select></div>' +
+                '<div style="margin-bottom:14px;"><label style="display:block;font-size:10px;font-weight:600;text-transform:uppercase;color:#3d4a5e;margin-bottom:4px;">Custom AI Instructions</label>' +
+                '<textarea id="ihack-cfg-custom" rows="3" placeholder="Leave empty for defaults..." style="width:100%;padding:8px;background:#111620;border:1px solid #252d3d;border-radius:4px;color:#e2e8f0;font-size:11px;outline:none;resize:vertical;box-sizing:border-box;font-family:Inter,system-ui,sans-serif;">' + (state.customInstruction || '') + '</textarea></div>' +
+                '<button id="ihack-cfg-save" style="width:100%;padding:10px;background:#a78bfa;border:none;border-radius:4px;color:#0b0e14;font-size:12px;font-weight:700;cursor:pointer;">✓ Save Settings</button>' +
+            '</div>';
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        document.getElementById('ihack-cfg-close').addEventListener('click', function() { overlay.remove(); });
+        overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+        document.getElementById('ihack-cfg-provider').addEventListener('change', function() {
+            var prov = this.value;
+            document.getElementById('ihack-cfg-model').innerHTML = (models[prov] || models.gemini).map(function(m) { return '<option>' + m + '</option>'; }).join('');
+        });
+        document.getElementById('ihack-cfg-save').addEventListener('click', function() {
+            var st = Pipeline.getState();
+            st.groqKey = document.getElementById('ihack-cfg-groq').value.trim();
+            var provider = document.getElementById('ihack-cfg-provider').value;
+            st.provider = provider;
+            st.model = document.getElementById('ihack-cfg-model').value;
+            st.customInstruction = document.getElementById('ihack-cfg-custom').value;
+            var aiKey = document.getElementById('ihack-cfg-aikey').value.trim();
+            if (provider === 'gemini') st.geminiKey = aiKey;
+            else if (provider === 'openrouter') st.openrouterKey = aiKey;
+            else st.groqKey = aiKey;
+            Pipeline.saveSettings();
+            overlay.remove();
+            console.log('[iHack] Settings saved');
+        });
+    }
+
+    // Override waitForApp to include UI injection
+    function waitForAppAndInit() {
+        var app = w.app || w.PKAudioEditor;
+        if (app && app.engine && app.engine.wavesurfer) {
+            console.log('[iHack] App detected, initializing...');
+            Pipeline.loadSettings();
+            initGhostOverlay(app);
+            injectUI(app);
+            Pipeline.loadDemo();
+            return;
+        }
+        setTimeout(waitForAppAndInit, 200);
+    }
+
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', waitForApp);
+        document.addEventListener('DOMContentLoaded', waitForAppAndInit);
     } else {
-        waitForApp();
+        waitForAppAndInit();
     }
 
     console.log('[iHack] Integration loaded v3.0');
