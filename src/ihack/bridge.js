@@ -32,15 +32,17 @@
 			}
 		});
 
-		// Capture original File by monkey-patching AudioMass's LoadArrayBuffer
-		var originalLoadArrayBuffer = app.engine.LoadArrayBuffer;
-		app.engine.LoadArrayBuffer = function (e) {
-			if (e && e.size) {
-				originalFile = e;
-				console.log ('[iHack] Captured original file:', e.name || 'blob', (e.size / (1024*1024)).toFixed (1) + 'MB');
+		// Capture original File BEFORE AudioMass decodes it
+		document.addEventListener ('drop', function (e) {
+			var files = e.dataTransfer && e.dataTransfer.files;
+			if (files && files.length > 0) {
+				var file = files[0];
+				if (file.type && file.type.indexOf ('audio/') === 0) {
+					originalFile = file;
+					console.log ('[iHack] Captured original file:', file.name, (file.size / (1024*1024)).toFixed (1) + 'MB');
+				}
 			}
-			return originalLoadArrayBuffer.call (this, e);
-		};
+		}, true);
 
 		// Listen for audio load to show pipeline bar
 		app.listenFor ('DidDownloadFile', function () {
