@@ -219,10 +219,12 @@
 			} else if (provider === 'openrouter') {
 				parsed = await callOpenRouter (key, model, prompt.systemInstruction, prompt.userPrompt);
 			} else {
-				parsed = await callGroqLLM (key, model, prompt.systemInstruction, prompt.userPrompt);
+				try {
+					parsed = await callGroqLLM (key, model, prompt.systemInstruction, prompt.userPrompt);
 				} catch (groqErr) {
 					logConsole ('Groq failed: ' + groqErr.message + '. Trying Gemini...', 'warn');
 					parsed = await callGeminiAPI (key, model, prompt.systemInstruction, prompt.userPrompt);
+				}
 			}
 
 			var intents = Array.isArray (parsed) ? parsed : (parsed.cut_intents || []);
